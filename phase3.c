@@ -8,8 +8,13 @@ int start2(char *);
 int  spawn_real(char *name, int (*func)(char *), char *arg,
                 int stack_size, int priority);
 int  wait_real(int *status);
-int
-start2(char *arg)
+int spawn();
+void terminate(sysargs *args);
+void terminate_real(int status);
+
+
+
+int start2(char *arg)
 {
     int		pid;
     int		status;
@@ -54,3 +59,37 @@ start2(char *arg)
     pid = wait_real(&status);
 
 } /* start2 */
+
+
+int spawn()
+{
+   //Not sure what goes in here..
+  //at some point, call spawn_real
+}
+int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int priority)
+{
+  
+  int pid = fork1(name, spawnLaunch, arg, stack_size, priority);
+  
+  if(pid < 0)
+  {
+    return -1;
+  }
+  
+  //Do some process stuff in here...
+  return pid;
+}
+
+void terminate(sysargs *args)
+{
+  
+  int status = (int)((long) args->arg1);
+  terminate_real(status);
+}
+  
+void terminate_real(int status)
+{
+  //zap childrem
+  //remove process from list of children
+  //quit
+}
