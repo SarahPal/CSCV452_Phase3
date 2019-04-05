@@ -1,10 +1,24 @@
+#include <stdio.h>
+
 #include <usloss.h>
 #include <phase1.h>
 #include <phase2.h>
 #include <phase3.h>
+#include <usyscall.h>
+#include <libuser.h>
+#include <provided_prototypes.h>
+
+#include "sems.h"
+
+#define debugflag3 0
 
 semaphore 	running;
-int start2(char *); 
+
+
+/* PROTOTYPES */
+extern int start3(char *);
+
+int start2(char *);
 int  spawn_real(char *name, int (*func)(char *), char *arg,
                 int stack_size, int priority);
 int  wait_real(int *status);
@@ -12,7 +26,10 @@ int spawn();
 void terminate(sysargs *args);
 void terminate_real(int status);
 
+static void check_kernel_mode(char *caller_name);
 
+semaphore SemTable[MAXSEMS];
+proc_struct ProcTable[MAXPROC];
 
 int start2(char *arg)
 {
@@ -21,6 +38,7 @@ int start2(char *arg)
     /*
      * Check kernel mode here.
      */
+     check_kernel_mode("start2");
 
     /*
      * Data structure initialization as needed...
@@ -52,7 +70,7 @@ int start2(char *arg)
      * begin executing the function passed to Spawn. spawn_launch() will
      * need to switch to user-mode before allowing user code to execute.
      * spawn_real() will return to spawn(), which will put the return
-     * values back into the sysargs pointer, switch to user-mode, and 
+     * values back into the sysargs pointer, switch to user-mode, and
      * return to the user code that called Spawn.
      */
     pid = spawn_real("start3", start3, NULL, 4*USLOSS_MIN_STACK, 3);
@@ -68,28 +86,50 @@ int spawn()
 }
 int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int priority)
 {
-  
-  int pid = fork1(name, spawnLaunch, arg, stack_size, priority);
-  
+
+  /*int pid = fork1(name, spawnLaunch, arg, stack_size, priority);
+
   if(pid < 0)
   {
     return -1;
   }
-  
+
   //Do some process stuff in here...
-  return pid;
+  return pid; */
 }
 
 void terminate(sysargs *args)
 {
-  
+
   int status = (int)((long) args->arg1);
   terminate_real(status);
 }
-  
+
 void terminate_real(int status)
 {
   //zap childrem
   //remove process from list of children
   //quit
 }
+
+/*----------------------------------------------------------------*
+ * Name        : check_kernel_mode                                *
+ * Purpose     : Checks the current kernel mode.                  *
+ * Parameters  : name of calling function                         *
+ * Returns     : nothing                                          *
+ * Side Effects: halts process if in user mode                    *
+ *----------------------------------------------------------------*/
+static void check_kernel_mode(char *caller_name)
+{
+    union psr_values caller_psr;                                        /* holds the current psr values */
+    if (DEBUG3 && debugflag3)
+       console("    - check_kernel_mode(): called for function %s -\n", caller_name);
+
+ /* checks if in kernel mode, halts otherwise */
+    caller_psr.integer_part = psr_get();                               /* stores current psr values into structure */
+    if (caller_psr.bits.cur_mode != 1)
+    {
+       console("        - %s(): called while not in kernel mode, by process. Halting... -\n", caller_name);
+       halt(1);
+    }
+}/* check_kernel_mode */
