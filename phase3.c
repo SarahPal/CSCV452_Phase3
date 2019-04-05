@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 
 #include <usloss.h>
 #include <phase1.h>
@@ -22,14 +23,23 @@ int start2(char *);
 int  spawn_real(char *name, int (*func)(char *), char *arg,
                 int stack_size, int priority);
 int  wait_real(int *status);
-int spawn();
+int spawn(sysargs *args);
 void terminate(sysargs *args);
 void terminate_real(int status);
+void add_child(int parentID, int childID);
+int spawn_launch(char *args);
+void remove_child(int parentID, int childID);
+void clear_proc(int status);
+
 
 static void check_kernel_mode(char *caller_name);
+void setUserMode();
 
 semaphore SemTable[MAXSEMS];
 proc_struct ProcTable[MAXPROC];
+
+
+int numProcs = 3;
 
 int start2(char *arg)
 {
@@ -43,8 +53,26 @@ int start2(char *arg)
     /*
      * Data structure initialization as needed...
      */
-
-
+     for(int i = 0; i < MAXPROC; i++)
+     {
+         ProcTable[i].childProcPtr = NULL;
+         ProcTable[i].nextSiblingPtr = NULL;
+         ProcTable[i].name[0] = '\0';
+         ProcTable[i].startArg[0] = '\0';
+         ProcTable[i].pid = UNUSED;
+         ProcTable[i].ppid = UNUSED;
+         ProcTable[i].priority = UNUSED;
+         ProcTable[i].start_func = NULL;
+         ProcTable[i].stack_size = UNUSED;
+         ProcTable[i].spawnBox = MboxCreate(1, MAXLINE);
+     }
+     for(int i = 0; i < MAXSEMS; i++)
+     {
+         SemTable[i].mutexBox = UNUSED;
+         SemTable[i].blockedBox = UNUSED;
+         SemTable[i].value = 0;
+         SemTable[i].blocked = 0;
+     }
     /*
      * Create first user-level process and wait for it to finish.
      * These are lower-case because they are not system calls;
@@ -74,42 +102,198 @@ int start2(char *arg)
      * return to the user code that called Spawn.
      */
     pid = spawn_real("start3", start3, NULL, 4*USLOSS_MIN_STACK, 3);
-    pid = wait_real(&status);
+    if(pid > 0)
+    {
+        pid = wait_real(&status);
+    }
+    return status;
 
 } /* start2 */
 
-
-int spawn()
+int  wait_real(int *status)
 {
-   //Not sure what goes in here..
-  //at some point, call spawn_real
+    int result = join(status);
+
+    if(is_zapped())
+    {
+        terminate_real(0);
+    }
+
+    return result;
+}
+int spawn(sysargs *args)
+{
+   char *name;
+   int (*func)(char *);
+   char *arg;
+   int stack_size;
+   int priority;
+
+   if(numProcs > MAXPROC)
+   {
+       args->arg4 = (void *)UNUSED;
+
+       numProcs--;
+       return 0;
+   }
+
+   name = args->arg5;
+   func = args->arg1;
+   arg = args->arg2;
+   stack_size = (long) args->arg3;
+   priority = (long) args->arg4;
+
+   long pid = spawn_real(name, func, arg, stack_size, priority);
+
+   args->arg1 = (void *) pid;
+   args->arg4 = (void *) 0;
+
+   setUserMode();
+   return pid;
 }
 int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int priority)
 {
 
-  /*int pid = fork1(name, spawnLaunch, arg, stack_size, priority);
+  int pid = fork1(name, spawn_launch, arg, stack_size, priority);
 
-  if(pid < 0)
+  int slot = getpid()%MAXPROC;
+  ProcTable[slot].pid = pid;
+  strcpy(ProcTable[slot].name, name);
+  if(arg != NULL)
   {
-    return -1;
+      strcpy(ProcTable[slot].startArg, arg);
   }
+  ProcTable[slot].priority = priority;
+  ProcTable[slot].start_func = func;
+  ProcTable[slot].stack_size = stack_size;
+  ProcTable[slot].ppid = getpid();
 
-  //Do some process stuff in here...
-  return pid; */
+  add_child(getpid(), pid);
+
+  MboxSend(ProcTable[slot].spawnBox, NULL, 0);
+
+  if(is_zapped())
+  {
+      terminate_real(0);
+  }
+  return pid;
 }
 
 void terminate(sysargs *args)
 {
-
   int status = (int)((long) args->arg1);
   terminate_real(status);
+  setUserMode();
 }
 
 void terminate_real(int status)
 {
-  //zap childrem
-  //remove process from list of children
-  //quit
+    proc_struct process = ProcTable[getpid()%MAXPROC];
+
+    if(process.num_children != 0)
+    {
+        int children[MAXPROC];
+        int i = 0;
+        for(proc_ptr child = process.childProcPtr; child != NULL; child =
+            child->nextSiblingPtr)
+        {
+            children[i] = child->pid;
+            i++;
+        }
+        for(i = 0; i < process.num_children; i++)
+        {
+            zap(children[i]);
+        }
+    }
+    remove_child(process.ppid, process.pid);
+    clear_proc(getpid()%MAXPROC);
+
+    quit(status);
+
+    numProcs--;
+
+}
+void clear_proc(int slot)
+{
+    ProcTable[slot].childProcPtr = NULL;
+    ProcTable[slot].nextSiblingPtr = NULL;
+    ProcTable[slot].name[0] = '\0';
+    ProcTable[slot].startArg[0] = '\0';
+    ProcTable[slot].pid = UNUSED;
+    ProcTable[slot].ppid = UNUSED;
+    ProcTable[slot].priority = UNUSED;
+    ProcTable[slot].start_func = NULL;
+    ProcTable[slot].stack_size = UNUSED;
+    ProcTable[slot].spawnBox = MboxCreate(0, MAXLINE);
+}
+
+void add_child(int parentID, int childID)
+{
+    parentID %= MAXPROC;
+    childID %= MAXPROC;
+
+    ProcTable[parentID].num_children++;
+
+    if(ProcTable[parentID].childProcPtr == NULL)
+    {
+        ProcTable[parentID].childProcPtr = &ProcTable[childID];
+    }
+    else{
+        proc_ptr child;
+
+        for(child = ProcTable[parentID].childProcPtr; child->nextSiblingPtr != NULL;
+            child = child->nextSiblingPtr)
+        {
+            child->nextSiblingPtr = &ProcTable[childID];
+        }
+    }
+    numProcs++;
+}
+void remove_child(int parentID, int childID)
+{
+    int parent = parentID%MAXPROC;
+    ProcTable[parent].num_children--;
+
+    if(ProcTable[parent].childProcPtr->pid == childID)
+    {
+        ProcTable[parent].childProcPtr = ProcTable[parent].childProcPtr->nextSiblingPtr;
+    }
+    else
+    {
+        proc_ptr child;
+        for(child = ProcTable[parent].childProcPtr; child->nextSiblingPtr != NULL;
+            child = child->nextSiblingPtr)
+        {
+            if(child->nextSiblingPtr->pid == childID)
+            {
+                child->nextSiblingPtr = child->nextSiblingPtr->nextSiblingPtr;
+                break;
+            }
+        }
+    }
+    numProcs--;
+}
+
+int spawn_launch(char *args)
+{
+    MboxReceive(ProcTable[getpid()%MAXPROC].spawnBox, NULL, 0);
+    proc_struct process = ProcTable[getpid()%MAXPROC];
+
+    int result = -1;
+    if(!is_zapped())
+    {
+        setUserMode();
+        int(*func)(char *) = process.start_func;
+        char arg[MAXARG];
+        strcpy(arg, process.startArg);
+
+        result = (func)(arg);
+        Terminate(result);
+    }
+    else{
+        terminate_real(0);
+    }
+    return result;
 }
 
 /*----------------------------------------------------------------*
@@ -133,3 +317,8 @@ static void check_kernel_mode(char *caller_name)
        halt(1);
     }
 }/* check_kernel_mode */
+
+void setUserMode()
+{
+    psr_set(psr_get() &~PSR_CURRENT_MODE);
+}
