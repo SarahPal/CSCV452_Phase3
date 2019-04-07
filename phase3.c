@@ -11,7 +11,7 @@
 
 #include "sems.h"
 
-#define debugflag3 0
+#define debugflag3 1
 
 semaphore 	running;
 
@@ -23,7 +23,7 @@ int start2(char *);
 int  spawn_real(char *name, int (*func)(char *), char *arg,
                 int stack_size, int priority);
 int  wait_real(int *status);
-int spawn(sysargs *args);
+void spawn(sysargs *args);
 void terminate(sysargs *args);
 void terminate_real(int status);
 void add_child(int parentID, int childID);
@@ -66,12 +66,20 @@ int start2(char *arg)
          ProcTable[i].stack_size = UNUSED;
          ProcTable[i].spawnBox = MboxCreate(1, MAXLINE);
      }
+     if(DEBUG3 && debugflag3)
+     {
+         console("    - start2(): process table initialized\n");
+     }
      for(int i = 0; i < MAXSEMS; i++)
      {
          SemTable[i].mutexBox = UNUSED;
          SemTable[i].blockedBox = UNUSED;
          SemTable[i].value = 0;
          SemTable[i].blocked = 0;
+     }
+     if(DEBUG3 && debugflag3)
+     {
+         console("    - start2(): semaphore table initialized\n");
      }
     /*
      * Create first user-level process and wait for it to finish.
@@ -106,12 +114,16 @@ int start2(char *arg)
     {
         pid = wait_real(&status);
     }
-    return status;
+    return pid;
 
 } /* start2 */
 
 int  wait_real(int *status)
 {
+    if(DEBUG3 && debugflag3)
+    {
+        console("wait_real(): wait_real reached\n");
+    }
     int result = join(status);
 
     if(is_zapped())
@@ -121,47 +133,50 @@ int  wait_real(int *status)
 
     return result;
 }
-int spawn(sysargs *args)
+void spawn(sysargs *args)
 {
-   char *name;
-   int (*func)(char *);
-   char *arg;
-   int stack_size;
-   int priority;
+    if(DEBUG3 && debugflag3)
+    {
+        console("    - spawn(): spawn reached\n");
+    }
+   char *name = args->arg5;
+   int (*func)(char *) = args->arg1;
+   char *arg = args->arg2;
+   int stack_size = (long)args->arg3;
+   int priority = (long) args->arg4;
 
-   if(numProcs > MAXPROC)
+   if(func == NULL || stack_size < USLOSS_MIN_STACK || numProcs > MAXPROC)
    {
+       if(DEBUG3 && debugflag3)
+       {
+           console("    - spawn(): invalid arguments. Returning...\n");
+       }
        args->arg4 = (void *)UNUSED;
-
-       numProcs--;
-       return 0;
+       return;
    }
 
-   name = args->arg5;
-   func = args->arg1;
-   arg = args->arg2;
-   stack_size = (long) args->arg3;
-   priority = (long) args->arg4;
-
-   long pid = spawn_real(name, func, arg, stack_size, priority);
+   int pid = spawn_real(name, func, arg, stack_size, priority);
 
    args->arg1 = (void *) pid;
    args->arg4 = (void *) 0;
 
    setUserMode();
-   return pid;
+   return;
 }
 int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int priority)
 {
-
+    if(DEBUG3 && debugflag3)
+    {
+        console("    - spawn_real(): spawn_real reached\n");
+    }
   int pid = fork1(name, spawn_launch, arg, stack_size, priority);
 
   int slot = getpid()%MAXPROC;
   ProcTable[slot].pid = pid;
-  strcpy(ProcTable[slot].name, name);
+  memcpy(ProcTable[slot].name, name, strlen(name));
   if(arg != NULL)
   {
-      strcpy(ProcTable[slot].startArg, arg);
+      memcpy(ProcTable[slot].startArg, arg, strlen(arg));
   }
   ProcTable[slot].priority = priority;
   ProcTable[slot].start_func = func;
@@ -170,10 +185,18 @@ int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int 
 
   add_child(getpid(), pid);
 
-  MboxSend(ProcTable[slot].spawnBox, NULL, 0);
+  if(ProcTable[pid%MAXPROC].priority < ProcTable[getpid()%MAXPROC].priority)
+  {
+      MboxSend(ProcTable[slot].spawnBox, NULL, 0);
+      console("Message Sent\n");
+  }
 
   if(is_zapped())
   {
+      if(DEBUG3 && debugflag3)
+      {
+          console("    - spawn(): process is zapped. Terminating.\n");
+      }
       terminate_real(0);
   }
   return pid;
@@ -181,6 +204,10 @@ int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int 
 
 void terminate(sysargs *args)
 {
+  if(DEBUG3 && debugflag3)
+  {
+      console("    - terminate(): terminate reached\n");
+  }
   int status = (int)((long) args->arg1);
   terminate_real(status);
   setUserMode();
@@ -188,6 +215,10 @@ void terminate(sysargs *args)
 
 void terminate_real(int status)
 {
+    if(DEBUG3 && debugflag3)
+    {
+        console("    - terminate_real(): terminate_real reached\n");
+    }
     proc_struct process = ProcTable[getpid()%MAXPROC];
 
     if(process.num_children != 0)
@@ -211,7 +242,6 @@ void terminate_real(int status)
     quit(status);
 
     numProcs--;
-
 }
 void clear_proc(int slot)
 {
@@ -224,11 +254,15 @@ void clear_proc(int slot)
     ProcTable[slot].priority = UNUSED;
     ProcTable[slot].start_func = NULL;
     ProcTable[slot].stack_size = UNUSED;
-    ProcTable[slot].spawnBox = MboxCreate(0, MAXLINE);
+    ProcTable[slot].spawnBox = MboxCreate(0, MAX_MESSAGE);
 }
 
 void add_child(int parentID, int childID)
 {
+    if(DEBUG3 && debugflag3)
+    {
+        console("    - add_child(): adding child to process table\n");
+    }
     parentID %= MAXPROC;
     childID %= MAXPROC;
 
@@ -251,6 +285,10 @@ void add_child(int parentID, int childID)
 }
 void remove_child(int parentID, int childID)
 {
+    if(DEBUG3 && debugflag3)
+    {
+        console("    - remove_childl(): removing child from process table\n");
+    }
     int parent = parentID%MAXPROC;
     ProcTable[parent].num_children--;
 
@@ -276,21 +314,34 @@ void remove_child(int parentID, int childID)
 
 int spawn_launch(char *args)
 {
-    MboxReceive(ProcTable[getpid()%MAXPROC].spawnBox, NULL, 0);
+    if(DEBUG3 && debugflag3)
+    {
+        console("    - spawn_launch(): spawn_launch reached\n");
+    }
+    int pid = getpid() % MAXPROC;
+    if(ProcTable[pid].pid == -1)
+    {
+        console("recieving message\n");
+        MboxCondReceive(ProcTable[pid].spawnBox, NULL, 0);
+    }
+
+    console("MboxRevieve passed\n");
     proc_struct process = ProcTable[getpid()%MAXPROC];
 
     int result = -1;
     if(!is_zapped())
     {
+        console("Process is not zapped\n");
         setUserMode();
         int(*func)(char *) = process.start_func;
         char arg[MAXARG];
-        strcpy(arg, process.startArg);
+        memcpy(arg, process.startArg, strlen(arg));
 
         result = (func)(arg);
         Terminate(result);
     }
     else{
+        console("process is zapped. Terminating.");
         terminate_real(0);
     }
     return result;
