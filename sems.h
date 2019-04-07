@@ -13,10 +13,11 @@ struct proc_struct {
    char           name[MAXNAME];
    char           startArg[MAXARG];
    int            priority;
-   int (*start_func) (char *);
+   int (* start_func) (char *);
    int            stack_size;
    int            spawnBox;
    int            num_children;
+   proc_ptr       next;
    proc_ptr       childProcPtr;
    proc_ptr       nextSiblingPtr;
    /* other fields as needed... */
@@ -25,7 +26,7 @@ struct proc_struct {
 struct semStruct{
     int           mutexBox;
     int           blockedBox;
-    int          value;
+    int           value;
     int           blocked;
 };
 
