@@ -27,7 +27,7 @@ void spawn(sysargs *args);
 void terminate(sysargs *args);
 void terminate_real(int status);
 void add_child(int parentID, int childID);
-int spawn_launch(char *args);
+int spawn_launch(char *arg);
 void remove_child(int parentID, int childID);
 void clear_proc(int status);
 
@@ -58,14 +58,16 @@ int start2(char *arg)
          ProcTable[i].childProcPtr = NULL;
          ProcTable[i].nextSiblingPtr = NULL;
          ProcTable[i].name[0] = '\0';
-         ProcTable[i].startArg[0] = '\0';
+         //ProcTable[i].startArg[0] = '\0';
          ProcTable[i].pid = UNUSED;
          ProcTable[i].ppid = UNUSED;
          ProcTable[i].priority = UNUSED;
          ProcTable[i].start_func = NULL;
          ProcTable[i].stack_size = UNUSED;
          ProcTable[i].spawnBox = MboxCreate(1, MAXLINE);
+         memset(ProcTable[i].startArg, 0, sizeof(char)*MAXARG);
      }
+
      if(DEBUG3 && debugflag3)
      {
          console("    - start2(): process table initialized\n");
@@ -122,7 +124,7 @@ int  wait_real(int *status)
 {
     if(DEBUG3 && debugflag3)
     {
-        console("wait_real(): wait_real reached\n");
+        console("    - wait_real(): wait_real reached\n");
     }
     int result = join(status);
 
@@ -132,7 +134,8 @@ int  wait_real(int *status)
     }
 
     return result;
-}
+} /* wait_real */
+
 void spawn(sysargs *args)
 {
     if(DEBUG3 && debugflag3)
@@ -162,18 +165,26 @@ void spawn(sysargs *args)
 
    setUserMode();
    return;
-}
+} /* spawn */
+
 int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int priority)
 {
     if(DEBUG3 && debugflag3)
-    {
         console("    - spawn_real(): spawn_real reached\n");
-    }
+
   int pid = fork1(name, spawn_launch, arg, stack_size, priority);
 
-  int slot = getpid()%MAXPROC;
+  if(pid == -1)
+  {
+      if(DEBUG3 && debugflag3)
+        console("    - spawn_real(): pid is -1. returning...\n");
+      return pid;
+  }
+
+  int slot = pid % MAXPROC;
   ProcTable[slot].pid = pid;
   memcpy(ProcTable[slot].name, name, strlen(name));
+
   if(arg != NULL)
   {
       memcpy(ProcTable[slot].startArg, arg, strlen(arg));
@@ -200,7 +211,43 @@ int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int 
       terminate_real(0);
   }
   return pid;
-}
+} /* spawn_real */
+
+int spawn_launch(char *arg)
+{
+    if(DEBUG3 && debugflag3)
+    {
+        console("    - spawn_launch(): spawn_launch reached\n");
+    }
+
+    int pid = (getpid()) % MAXPROC;
+    int result;
+
+    proc_ptr process = &ProcTable[pid];
+
+    if(process->pid == -1)
+    {
+        //initialize process...
+        /*ProcTable[pid].pid = pid;
+        ProcTable[pid].spawnBox = MboxCreate(0,0);
+        ProcTable[pid].start_func = NULL;
+        ProcTable[pid].childProcPtr = NULL; */
+        MboxReceive(ProcTable[pid].spawnBox, NULL, 0);
+    }
+
+    if(is_zapped())
+    {;
+        terminate_real(0);
+        return 0;
+    }
+    setUserMode();
+
+    result = process->start_func(arg);
+    console("result set");
+    Terminate(result);
+    return result;
+} /* spawn_launch */
+
 
 void terminate(sysargs *args)
 {
@@ -211,7 +258,7 @@ void terminate(sysargs *args)
   int status = (int)((long) args->arg1);
   terminate_real(status);
   setUserMode();
-}
+} /* terminate */
 
 void terminate_real(int status)
 {
@@ -242,7 +289,8 @@ void terminate_real(int status)
     quit(status);
 
     numProcs--;
-}
+} /*terminate_real */
+
 void clear_proc(int slot)
 {
     ProcTable[slot].childProcPtr = NULL;
@@ -255,7 +303,7 @@ void clear_proc(int slot)
     ProcTable[slot].start_func = NULL;
     ProcTable[slot].stack_size = UNUSED;
     ProcTable[slot].spawnBox = MboxCreate(0, MAX_MESSAGE);
-}
+} /*clear_proc */
 
 void add_child(int parentID, int childID)
 {
@@ -282,7 +330,8 @@ void add_child(int parentID, int childID)
         }
     }
     numProcs++;
-}
+} /*add_child */
+
 void remove_child(int parentID, int childID)
 {
     if(DEBUG3 && debugflag3)
@@ -310,42 +359,8 @@ void remove_child(int parentID, int childID)
         }
     }
     numProcs--;
-}
+} /* remove_child */
 
-int spawn_launch(char *args)
-{
-    if(DEBUG3 && debugflag3)
-    {
-        console("    - spawn_launch(): spawn_launch reached\n");
-    }
-    int pid = getpid() % MAXPROC;
-    if(ProcTable[pid].pid == -1)
-    {
-        console("recieving message\n");
-        MboxCondReceive(ProcTable[pid].spawnBox, NULL, 0);
-    }
-
-    console("MboxRevieve passed\n");
-    proc_struct process = ProcTable[getpid()%MAXPROC];
-
-    int result = -1;
-    if(!is_zapped())
-    {
-        console("Process is not zapped\n");
-        setUserMode();
-        int(*func)(char *) = process.start_func;
-        char arg[MAXARG];
-        memcpy(arg, process.startArg, strlen(arg));
-
-        result = (func)(arg);
-        Terminate(result);
-    }
-    else{
-        console("process is zapped. Terminating.");
-        terminate_real(0);
-    }
-    return result;
-}
 
 /*----------------------------------------------------------------*
  * Name        : check_kernel_mode                                *
@@ -371,5 +386,10 @@ static void check_kernel_mode(char *caller_name)
 
 void setUserMode()
 {
+    if(DEBUG3 && debugflag3)
+        console("    - setUserMode(): inside setUserMode\n");
     psr_set(psr_get() &~PSR_CURRENT_MODE);
-}
+
+    if(DEBUG3 && debugflag3)
+        console("        - setUserMode(): user mode set successfully\n");
+} /* setUserMode */
