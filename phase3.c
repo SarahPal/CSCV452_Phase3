@@ -26,9 +26,9 @@ int  wait_real(int *status);
 void spawn(sysargs *args);
 void terminate(sysargs *args);
 void terminate_real(int status);
-void add_child(int parentID, int childID);
+void add_child(proc_ptr *children, proc_ptr newChildren);
 int spawn_launch(char *arg);
-void remove_child(int parentID, int childID);
+void remove_child(proc_ptr *children);
 void clear_proc(int status);
 
 
@@ -142,11 +142,12 @@ void spawn(sysargs *args)
     {
         console("    - spawn(): spawn reached\n");
     }
-   char *name = args->arg5;
+
    int (*func)(char *) = args->arg1;
    char *arg = args->arg2;
-   int stack_size = (long)args->arg3;
-   int priority = (long) args->arg4;
+   int stack_size = (int)((long)args->arg3);
+   int priority = (int)((long) args->arg4);
+   char *name = args->arg5;
 
    if(func == NULL || stack_size < USLOSS_MIN_STACK || numProcs > MAXPROC)
    {
@@ -154,14 +155,14 @@ void spawn(sysargs *args)
        {
            console("    - spawn(): invalid arguments. Returning...\n");
        }
-       args->arg4 = (void *)UNUSED;
+       args->arg1 = (void *)UNUSED;
        return;
    }
 
    int pid = spawn_real(name, func, arg, stack_size, priority);
 
    args->arg1 = (void *) pid;
-   args->arg4 = (void *) 0;
+   //args->arg4 = (void *) 0;
 
    setUserMode();
    return;
@@ -182,21 +183,26 @@ int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int 
   }
 
   int slot = pid % MAXPROC;
+
   ProcTable[slot].pid = pid;
-  memcpy(ProcTable[slot].name, name, strlen(name));
+  ProcTable[slot].start_func = func;
+  ProcTable[slot].priority = priority;
+
+  if(name != NULL)
+  {
+      memcpy(ProcTable[slot].name, name, strlen(name));
+  }
 
   if(arg != NULL)
   {
       memcpy(ProcTable[slot].startArg, arg, strlen(arg));
   }
-  ProcTable[slot].priority = priority;
-  ProcTable[slot].start_func = func;
-  ProcTable[slot].stack_size = stack_size;
+
   ProcTable[slot].ppid = getpid();
 
-  add_child(getpid(), pid);
+  add_child(&ProcTable[getpid()].childProcPtr, &ProcTable[pid]);
 
-  if(ProcTable[pid%MAXPROC].priority < ProcTable[getpid()%MAXPROC].priority)
+  if(ProcTable[pid % MAXPROC].priority < ProcTable[getpid() % MAXPROC].priority)
   {
       MboxSend(ProcTable[slot].spawnBox, NULL, 0);
       console("Message Sent\n");
@@ -209,6 +215,7 @@ int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int 
           console("    - spawn(): process is zapped. Terminating.\n");
       }
       terminate_real(0);
+      return 0;
   }
   return pid;
 } /* spawn_real */
@@ -227,16 +234,11 @@ int spawn_launch(char *arg)
 
     if(process->pid == -1)
     {
-        //initialize process...
-        /*ProcTable[pid].pid = pid;
-        ProcTable[pid].spawnBox = MboxCreate(0,0);
-        ProcTable[pid].start_func = NULL;
-        ProcTable[pid].childProcPtr = NULL; */
         MboxReceive(ProcTable[pid].spawnBox, NULL, 0);
     }
 
     if(is_zapped())
-    {;
+    {
         terminate_real(0);
         return 0;
     }
@@ -283,7 +285,8 @@ void terminate_real(int status)
             zap(children[i]);
         }
     }
-    remove_child(process.ppid, process.pid);
+    int parentPID = ProcTable[getpid() % MAXPROC].ppid;
+    remove_child(&ProcTable[parentPID].childProcPtr);
     clear_proc(getpid()%MAXPROC);
 
     quit(status);
@@ -305,60 +308,37 @@ void clear_proc(int slot)
     ProcTable[slot].spawnBox = MboxCreate(0, MAX_MESSAGE);
 } /*clear_proc */
 
-void add_child(int parentID, int childID)
+void add_child(proc_ptr *children, proc_ptr newChildren)
 {
     if(DEBUG3 && debugflag3)
     {
         console("    - add_child(): adding child to process table\n");
     }
-    parentID %= MAXPROC;
-    childID %= MAXPROC;
-
-    ProcTable[parentID].num_children++;
-
-    if(ProcTable[parentID].childProcPtr == NULL)
+    if(*children == NULL)
+        *children = newChildren;
+    else
     {
-        ProcTable[parentID].childProcPtr = &ProcTable[childID];
-    }
-    else{
-        proc_ptr child;
-
-        for(child = ProcTable[parentID].childProcPtr; child->nextSiblingPtr != NULL;
-            child = child->nextSiblingPtr)
+        proc_ptr temp = *children;
+        while(temp->nextSiblingPtr != NULL)
         {
-            child->nextSiblingPtr = &ProcTable[childID];
+            temp = temp->nextSiblingPtr;
         }
+        temp->nextSiblingPtr = newChildren;
     }
-    numProcs++;
 } /*add_child */
 
-void remove_child(int parentID, int childID)
+void remove_child(proc_ptr *children)
 {
     if(DEBUG3 && debugflag3)
     {
         console("    - remove_childl(): removing child from process table\n");
     }
-    int parent = parentID%MAXPROC;
-    ProcTable[parent].num_children--;
-
-    if(ProcTable[parent].childProcPtr->pid == childID)
+    if(*children == NULL)
     {
-        ProcTable[parent].childProcPtr = ProcTable[parent].childProcPtr->nextSiblingPtr;
+        return;
     }
-    else
-    {
-        proc_ptr child;
-        for(child = ProcTable[parent].childProcPtr; child->nextSiblingPtr != NULL;
-            child = child->nextSiblingPtr)
-        {
-            if(child->nextSiblingPtr->pid == childID)
-            {
-                child->nextSiblingPtr = child->nextSiblingPtr->nextSiblingPtr;
-                break;
-            }
-        }
-    }
-    numProcs--;
+    proc_ptr temp = *children;
+    *children = temp->nextSiblingPtr;
 } /* remove_child */
 
 
