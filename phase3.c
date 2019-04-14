@@ -85,8 +85,8 @@ int start2(char *arg)
      sys_vec[SYS_SEMV] = sem_v;
      sys_vec[SYS_SEMFREE] = sem_free;
      sys_vec[SYS_GETPID] = new_getpid;
-     sys_vec[SYS_CPUTIMEOFDAY] = cpuTime;
-     sys_vec[SYS_COW] = getTimeofDay;
+     sys_vec[SYS_CPUTIME] = cpuTime;
+     sys_vec[SYS_GETTIMEOFDAY] = getTimeofDay;
 
      for(int i = 0; i < MAXPROC; i++)
      {
@@ -551,22 +551,27 @@ int sem_free_real(int semID)
 
 void getTimeofDay(sysargs *args)
 {
+    int result = getTimeofDay_real();
 
+    args->arg1 = (void *) result;
 } /* getTimeofDay */
 
 int getTimeofDay_real()
 {
-
+    return clock();
+    //return 0;
 } /* getTimeofDay_real */
 
 void cpuTime(sysargs *args)
 {
+    int result = cpuTime_real();
+    args->arg1 = (void *) result;
 
 } /* cpuTime */
 
 int cpuTime_real()
 {
-
+    return readtime();
 } /* cpuTime_real */
 
 int next_sem()
@@ -630,7 +635,9 @@ void remove_child(proc_ptr *children)
 
 int new_getpid(sysargs *args)
 {
-    return (int)args->arg1;
+    int result = getpid();
+    args->arg1 = (void *) result;
+    return result;
 }
 
 
