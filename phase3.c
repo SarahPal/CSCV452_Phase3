@@ -29,7 +29,7 @@ void terminate(sysargs *args);
 void terminate_real(int status);
 void add_child(proc_ptr *children, proc_ptr newChildren);
 int spawn_launch(char *arg);
-void remove_child(proc_ptr *children);
+void remove_child(proc_ptr children, int parentPID);
 void clear_proc(int status);
 void nullsys3(sysargs *args);
 
@@ -182,9 +182,10 @@ void wait(sysargs *args)
 
     if(is_zapped())
     {
+        if(DEBUG3 && debugflag3)
+            console("        - wait(): process is zapped. Calling terminate_real()\n");
         terminate_real(1);
     }
-    //setUserMode();
 }
 
 int  wait_real(int *status)
@@ -316,7 +317,7 @@ void terminate(sysargs *args)
   {
       console("    - terminate(): terminate reached\n");
   }
-  int status = (int)((long) args->arg1);
+  int status = (int)(args->arg1);
   terminate_real(status);
   setUserMode();
 } /* terminate */
@@ -329,28 +330,17 @@ void terminate_real(int status)
     }
     proc_struct process = ProcTable[getpid()%MAXPROC];
 
-    if(process.num_children != 0)
+    if(DEBUG3 && debugflag3)
+        console("        - terminate_real(): terminating process and children\n");
+    while(process.num_children > 0)
     {
-        int children[MAXPROC];
-        int i = 0;
-        for(proc_ptr child = process.childProcPtr; child != NULL; child =
-            child->nextSiblingPtr)
-        {
-            children[i] = child->pid;
-            i++;
-        }
-        for(i = 0; i < process.num_children; i++)
-        {
-            zap(children[i]);
-        }
+        remove_child(process.childProcPtr, process.ppid);
+        zap(process.childProcPtr->pid);
     }
-    int parentPID = ProcTable[getpid() % MAXPROC].ppid;
-    remove_child(&ProcTable[parentPID].childProcPtr);
+    remove_child(ProcTable[getpid()%MAXPROC].childProcPtr, process.ppid);
     clear_proc(getpid()%MAXPROC);
-
-    quit(status);
-
     numProcs--;
+    quit(status);
 } /*terminate_real */
 
 void sem_create(sysargs *args)
@@ -420,6 +410,8 @@ int sem_create_real(int semID)
 
 void sem_p(sysargs *args)
 {
+    if(DEBUG3 && debugflag3)
+        console("    - sem_p(): entering sem_p function.\n");
     int semID, result;
 
     semID = (int)args->arg1;
@@ -430,6 +422,8 @@ void sem_p(sysargs *args)
 
 int sem_p_real(int semID)
 {
+    if(DEBUG3 && debugflag3)
+        console("    - sem_p_real(): entering sem_p_real function.\n");
     int mutexBox, blockedBox;
     int break_loop = 0;
 
@@ -477,6 +471,8 @@ int sem_p_real(int semID)
 
 void sem_v(sysargs *args)
 {
+    if(DEBUG3 && debugflag3)
+        console("    - sem_v(): entering sem_v function.\n");
     int semID = args->arg1;
     int result = sem_v_real(semID);
 
@@ -486,6 +482,8 @@ void sem_v(sysargs *args)
 
 int sem_v_real(int semID)
 {
+    if(DEBUG3 && debugflag3)
+        console("    - sem_v_real(): entering sem_v_real function.\n");
     int mutexBox, blockedBox;
 
     mutexBox = SemTable[semID].mutexBox;
@@ -517,10 +515,14 @@ int sem_v_real(int semID)
 
 void sem_free(sysargs *args)
 {
+    if(DEBUG3 && debugflag3)
+        console("    - sem_free(): entering sem_free function.\n");
     int result;
     int semID = (int)args->arg1;
     if(semID == -1)
     {
+        if(DEBUG3 && debugflag3)
+            console("        - sem_free(): invalid semaphore ID. \n");
         args->arg4 = (void *) -1;
     }
     else
@@ -532,6 +534,8 @@ void sem_free(sysargs *args)
 
 int sem_free_real(int semID)
 {
+    if(DEBUG3 && debugflag3)
+        console("    - sem_free_real(): entering sem_free_real function.\n");
     if(SemTable[semID].mutexBox == -1)
     {
         if(DEBUG3 && debugflag3)
@@ -541,15 +545,23 @@ int sem_free_real(int semID)
 
     SemTable[semID].mutexBox = -1;
     int result = 0;
+    if(DEBUG3 && debugflag3)
+        console("        - sem_free_real(): mutexBox reset to -1\n");
 
     if(SemTable[semID].blocked > 0)
     {
+        if(DEBUG3 && debugflag3)
+            console("        - sem_free_real(): unblocking processes\n");
         result = -1;
-
-        for(int i = 0; i < SemTable[semID].blocked; i++)
+        int loop = SemTable[semID].blocked;
+        for(int i = 0; i < loop; i++)
         {
+            if(DEBUG3 && debugflag3)
+                console("        - sem_free_real(): recieving message %d\n", i);
             MboxReceive(SemTable[semID].blockedBox, NULL, 0);
         }
+        if(DEBUG3 && debugflag3)
+            console("        - sem_free_real(): processes unblocked.\n");
     }
     SemTable[semID].blockedBox = -1;
     SemTable[semID].value = -1;
@@ -633,18 +645,23 @@ void add_child(proc_ptr *children, proc_ptr newChildren)
     }
 } /*add_child */
 
-void remove_child(proc_ptr *children)
+void remove_child(proc_ptr children, int parentPID)
 {
     if(DEBUG3 && debugflag3)
     {
         console("    - remove_childl(): removing child from process table\n");
     }
-    if(*children == NULL)
+    if(children == NULL)
     {
         return;
     }
-    proc_ptr temp = *children;
-    *children = temp->nextSiblingPtr;
+    int pid = children->pid;
+    if(ProcTable[parentPID].childProcPtr->pid == pid)
+    {
+        ProcTable[parentPID].childProcPtr = ProcTable[parentPID].childProcPtr->nextSiblingPtr;
+    }
+    proc_ptr temp = children;
+    children = temp->nextSiblingPtr;
 } /* remove_child */
 
 int new_getpid(sysargs *args)
