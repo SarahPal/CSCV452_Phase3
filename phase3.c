@@ -336,7 +336,9 @@ void terminate_real(int status)
 
     if(process.num_children != 0)
     {
-        int children[MAXPROC];
+        if(DEBUG3 && debugflag3)
+            console("        - terminate_real(): children present. Cataloging\n");
+        int children[process.num_children];
         int i = 0;
         proc_ptr child = process.childProcPtr;
         while(child != NULL)
@@ -347,13 +349,15 @@ void terminate_real(int status)
             i++;
         }
 
+        if(DEBUG3 && debugflag3)
+            console("        - terminate_real(): deleting children...\n");
         for(int j = 0; j < process.num_children; j++)
         {
-            console("%d\n", children[j]);
-            if(children[j] <= 0)
+            //console("%d\n", children[j]);
+            if(children[j] <= 0 || children[j] > MAXPROC)
             {
                 if(DEBUG3 && debugflag3)
-                    console("        - terminate_real(): invalid pid. returning");
+                    console("        - terminate_real(): invalid pid.\n");
             }
             else
             {
@@ -367,7 +371,9 @@ void terminate_real(int status)
         }
 
     }
-    remove_child(getpid(), process.ppid);
+    if(DEBUG3 && debugflag3)
+        console("        - terminate_real(): removing parent\n");
+    //remove_child(getpid(), process.ppid);
     //zap(process.pid);
     clear_proc(getpid()%MAXPROC);
     numProcs--;
