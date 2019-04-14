@@ -32,14 +32,24 @@ void remove_child(proc_ptr *children);
 void clear_proc(int status);
 void nullsys3(sysargs *args);
 
-int sem_create(sysargs *args);
+/* Semaphore Prototypes */
+void sem_create(sysargs *args);
 int sem_create_real(int semID);
-int sem_p(int semID);
-int sem_v(int semID);
-int sem_free(int semID);
-
+void sem_p(sysargs *args);
+int sem_p_real(int semID);
+void sem_v(sysargs *args);
+int sem_v_real(int semID);
+void sem_free(sysargs *args);
+int sem_free_real(int semID);
 int next_sem();
 
+/* Time Prototypes */
+void getTimeofDay(sysargs *args);
+int getTimeofDay_real();
+void cpuTime(sysargs *args);
+int cpuTime_real();
+
+int new_getpid(sysargs *args);
 static void check_kernel_mode(char *caller_name);
 void setUserMode();
 
@@ -74,6 +84,9 @@ int start2(char *arg)
      sys_vec[SYS_SEMP] = sem_p;
      sys_vec[SYS_SEMV] = sem_v;
      sys_vec[SYS_SEMFREE] = sem_free;
+     sys_vec[SYS_GETPID] = new_getpid;
+     sys_vec[SYS_CPUTIMEOFDAY] = cpuTime;
+     sys_vec[SYS_COW] = getTimeofDay;
 
      for(int i = 0; i < MAXPROC; i++)
      {
@@ -277,7 +290,6 @@ int spawn_launch(char *arg)
     setUserMode();
 
     result = process->start_func(arg);
-    console("result set");
     Terminate(result);
     return result;
 } /* spawn_launch */
@@ -326,7 +338,7 @@ void terminate_real(int status)
     numProcs--;
 } /*terminate_real */
 
-int sem_create(sysargs *args)
+void sem_create(sysargs *args)
 {
     if(DEBUG3 && debugflag3)
     {
@@ -345,9 +357,6 @@ int sem_create(sysargs *args)
       args->arg4 = 0;
       args->arg1 = (void *) address;
     }
-
-    return address;
-
 } /* sem_create */
 
 int sem_create_real(int semID)
@@ -381,7 +390,7 @@ int sem_create_real(int semID)
             console("        - sem_create_real(): Could not create blocked box.\n");
         return -1;
     }
-    
+
     int sem_num = next_sem();
     SemTable[sem_num].mutexBox = mutexBox;
     SemTable[sem_num].blockedBox = blockedBox;
@@ -394,21 +403,171 @@ int sem_create_real(int semID)
 
 } /* sem_create_real */
 
-int sem_p(int semID)
+void sem_p(sysargs *args)
 {
+    int semID, result;
 
+    semID = (int)args->arg1;
+    result = sem_p_real(semID);
+
+    args->arg4 = (void *) result;
 } /* sem_p */
 
-int sem_v(int semID)
+int sem_p_real(int semID)
 {
+    int mutexBox, blockedBox;
+    int break_loop = 0;
+
+    mutexBox = SemTable[semID].mutexBox;
+    blockedBox = SemTable[semID].blockedBox;
+    if(mutexBox == -1)
+    {
+        if(DEBUG3 && debugflag3)
+            console("       - sem_p_real(): invalid mutex box.\n");
+        return -1;
+    }
+
+    MboxSend(mutexBox, NULL, 0);
+
+    do{
+        SemTable[semID].blocked++;
+        MboxReceive(mutexBox, NULL, 0);
+
+        MboxSend(blockedBox, NULL, 0);
+
+        if(is_zapped())
+            terminate_real(0);
+        if(mutexBox == -1)
+        {
+            break_loop = 1;
+        }
+        else
+        {
+            MboxSend(mutexBox, NULL, 0);
+        }
+    }while(SemTable[semID].value <= 0 && break_loop != 1);
+
+    if(break_loop != 1)
+    {
+        SemTable[semID].value--;
+        MboxReceive(mutexBox, NULL, 0);
+    }
+    else
+    {
+        terminate_real(1);
+    }
+    return 0;
+
+} /* sem_p_real */
+
+void sem_v(sysargs *args)
+{
+    int semID = args->arg1;
+    int result = sem_v_real(semID);
+
+    args->arg4 = (void *) result;
 
 } /* sem_v */
 
-int sem_free(int semID)
+int sem_v_real(int semID)
 {
+    int mutexBox, blockedBox;
 
+    mutexBox = SemTable[semID].mutexBox;
+    blockedBox = SemTable[semID].blockedBox;
+
+    if(mutexBox == -1)
+    {
+        if(DEBUG3 && debugflag3)
+            console("        - sem_v_real(): Invalid mutexBox.\n");
+        return -1;
+    }
+
+    MboxSend(mutexBox, NULL, 0);
+    SemTable[semID].value++;
+
+    if(SemTable[semID].blocked > 0)
+    {
+        MboxReceive(blockedBox, NULL, 0);
+        SemTable[semID].blocked--;
+    }
+
+    MboxReceive(mutexBox, NULL, 0);
+
+    if(is_zapped())
+        terminate_real(0);
+    return 0;
+
+} /* sem_v_real */
+
+void sem_free(sysargs *args)
+{
+    int result;
+    int semID = (int)args->arg1;
+    if(semID == -1)
+    {
+        args->arg4 = (void *) -1;
+    }
+    else
+    {
+        result = sem_free_real(semID);
+        args->arg4 = (void *) result;
+    }
 } /* sem_free */
 
+int sem_free_real(int semID)
+{
+    if(SemTable[semID].mutexBox == -1)
+    {
+        if(DEBUG3 && debugflag3)
+            console("        - sem_free_real(): invalid mutex box.\n");
+        return -1;
+    }
+
+    SemTable[semID].mutexBox = -1;
+    int result = 0;
+
+    if(SemTable[semID].blocked > 0)
+    {
+        result = -1;
+
+        for(int i = 0; i < SemTable[semID].blocked; i++)
+        {
+            MboxReceive(SemTable[semID].blockedBox, NULL, 0);
+        }
+    }
+    SemTable[semID].blockedBox = -1;
+    SemTable[semID].value = -1;
+    SemTable[semID].blocked = 0;
+
+    MboxRelease(SemTable[semID].mutexBox);
+    MboxRelease(SemTable[semID].blockedBox);
+
+    if(is_zapped())
+        terminate_real(0);
+    Sems--;
+    return result;
+} /* sem_free_real */
+
+void getTimeofDay(sysargs *args)
+{
+
+} /* getTimeofDay */
+
+int getTimeofDay_real()
+{
+
+} /* getTimeofDay_real */
+
+void cpuTime(sysargs *args)
+{
+
+} /* cpuTime */
+
+int cpuTime_real()
+{
+
+} /* cpuTime_real */
 
 int next_sem()
 {
@@ -468,6 +627,11 @@ void remove_child(proc_ptr *children)
     proc_ptr temp = *children;
     *children = temp->nextSiblingPtr;
 } /* remove_child */
+
+int new_getpid(sysargs *args)
+{
+    return (int)args->arg1;
+}
 
 
 /*----------------------------------------------------------------*
