@@ -22,6 +22,7 @@ extern int start3(char *);
 int start2(char *);
 int  spawn_real(char *name, int (*func)(char *), char *arg,
                 int stack_size, int priority);
+void wait(sysargs *args);
 int  wait_real(int *status);
 void spawn(sysargs *args);
 void terminate(sysargs *args);
@@ -78,7 +79,7 @@ int start2(char *arg)
      }
 
      sys_vec[SYS_SPAWN] = spawn;
-     sys_vec[SYS_WAIT] = wait_real;
+     sys_vec[SYS_WAIT] = wait;
      sys_vec[SYS_TERMINATE] = terminate;
      sys_vec[SYS_SEMCREATE] = sem_create;
      sys_vec[SYS_SEMP] = sem_p;
@@ -159,24 +160,38 @@ void nullsys3(sysargs *args)
 {
   if(DEBUG3 && debugflag3)
   {
-    console("  - nullsys(): process %d", getpid());
+    console("  - nullsys(): process %d\n", getpid());
   }
   console("    - nullsys(): Invalid syscall %d. Halting...\n", args->number);
   terminate_real(1);
 }
 
-int  wait_real(int *status)
+void wait(sysargs *args)
 {
     if(DEBUG3 && debugflag3)
     {
-        console("    - wait_real(): wait_real reached\n");
+        console("    - wait(): wait reached\n");
     }
-    int result = join(status);
+    int status = args->arg2;
+
+    int pid = wait_real(&status);
+
+    args->arg1 = (void *)pid;
+    args->arg2 = (void *)status;
+    args->arg4 = 0;
 
     if(is_zapped())
     {
-        terminate_real(0);
+        terminate_real(1);
     }
+    //setUserMode();
+}
+
+int  wait_real(int *status)
+{
+    if(DEBUG3 && debugflag3)
+        console("    - wait_real(): Entering function.\n");
+    int result = join(status);
 
     return result;
 } /* wait_real */
@@ -558,8 +573,7 @@ void getTimeofDay(sysargs *args)
 
 int getTimeofDay_real()
 {
-    return clock();
-    //return 0;
+    return sys_clock();
 } /* getTimeofDay_real */
 
 void cpuTime(sysargs *args)
