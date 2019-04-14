@@ -32,6 +32,13 @@ void remove_child(proc_ptr *children);
 void clear_proc(int status);
 void nullsys3(sysargs *args);
 
+int sem_create(sysargs *args);
+int sem_create_real(int semID);
+int sem_p(int semID);
+int sem_v(int semID);
+int sem_free(int semID);
+
+int next_sem();
 
 static void check_kernel_mode(char *caller_name);
 void setUserMode();
@@ -40,7 +47,8 @@ semaphore SemTable[MAXSEMS];
 proc_struct ProcTable[MAXPROC];
 
 
-int numProcs;
+int numProcs = 0;
+int Sems = 0;
 
 int start2(char *arg)
 {
@@ -62,6 +70,10 @@ int start2(char *arg)
      sys_vec[SYS_SPAWN] = spawn;
      sys_vec[SYS_WAIT] = wait_real;
      sys_vec[SYS_TERMINATE] = terminate;
+     sys_vec[SYS_SEMCREATE] = sem_create;
+     sys_vec[SYS_SEMP] = sem_p;
+     sys_vec[SYS_SEMV] = sem_v;
+     sys_vec[SYS_SEMFREE] = sem_free;
 
      for(int i = 0; i < MAXPROC; i++)
      {
@@ -226,7 +238,6 @@ int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int 
   if(ProcTable[pid % MAXPROC].priority < ProcTable[getpid() % MAXPROC].priority)
   {
       MboxSend(ProcTable[slot].spawnBox, NULL, 0);
-      console("Message Sent\n");
   }
 
   if(is_zapped())
@@ -315,6 +326,102 @@ void terminate_real(int status)
     numProcs--;
 } /*terminate_real */
 
+int sem_create(sysargs *args)
+{
+    if(DEBUG3 && debugflag3)
+    {
+      console("    - process %d: sem_create\n", getpid());
+    }
+
+    int address = sem_create_real((int)args->arg1);
+
+    if(address == -1)
+    {
+      args->arg4 = (void *)-1;
+      args->arg1 = NULL;
+    }
+    else
+    {
+      args->arg4 = 0;
+      args->arg1 = (void *) address;
+    }
+
+    return address;
+
+} /* sem_create */
+
+int sem_create_real(int semID)
+{
+    if(DEBUG3 && debugflag3)
+    {
+      console("    - process %d: sem_create_real\n", getpid());
+    }
+
+    if(Sems >= MAXSEMS)
+    {
+        if(DEBUG3 && debugflag3)
+            console("        - sem_create_real(): Max Semaphores reached.\n");
+        return -1;
+    }
+
+    int mutexBox = MboxCreate(1, 0);
+
+    if(mutexBox == -1)
+    {
+        if(DEBUG3 && debugflag3)
+            console("        - sem_create_real(): Could not create mutex box.\n");
+        return -1;
+    }
+
+    int blockedBox = MboxCreate(0, 0);
+
+    if(blockedBox == -1)
+    {
+        if(DEBUG3 && debugflag3)
+            console("        - sem_create_real(): Could not create blocked box.\n");
+        return -1;
+    }
+    
+    int sem_num = next_sem();
+    SemTable[sem_num].mutexBox = mutexBox;
+    SemTable[sem_num].blockedBox = blockedBox;
+    SemTable[sem_num].value = semID;
+    SemTable[sem_num].blocked = 0;
+
+    Sems++;
+
+    return sem_num;
+
+} /* sem_create_real */
+
+int sem_p(int semID)
+{
+
+} /* sem_p */
+
+int sem_v(int semID)
+{
+
+} /* sem_v */
+
+int sem_free(int semID)
+{
+
+} /* sem_free */
+
+
+int next_sem()
+{
+    while(SemTable[Sems].mutexBox != -1)
+    {
+        Sems++;
+        if(Sems >= MAXSEMS)
+        {
+            Sems = 0;
+        }
+    }
+    return Sems;
+}
 void clear_proc(int slot)
 {
     ProcTable[slot].childProcPtr = NULL;
