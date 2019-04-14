@@ -11,7 +11,7 @@
 
 #include "sems.h"
 
-#define debugflag3 1
+#define debugflag3 0
 
 semaphore 	running;
 
@@ -30,6 +30,7 @@ void add_child(proc_ptr *children, proc_ptr newChildren);
 int spawn_launch(char *arg);
 void remove_child(proc_ptr *children);
 void clear_proc(int status);
+void nullsys3(sysargs *args);
 
 
 static void check_kernel_mode(char *caller_name);
@@ -39,7 +40,7 @@ semaphore SemTable[MAXSEMS];
 proc_struct ProcTable[MAXPROC];
 
 
-int numProcs = 3;
+int numProcs;
 
 int start2(char *arg)
 {
@@ -53,6 +54,15 @@ int start2(char *arg)
     /*
      * Data structure initialization as needed...
      */
+     for(int i = 0; i < MAXSYSCALLS; i++)
+     {
+       sys_vec[i] = nullsys3;
+     }
+
+     sys_vec[SYS_SPAWN] = spawn;
+     sys_vec[SYS_WAIT] = wait_real;
+     sys_vec[SYS_TERMINATE] = terminate;
+
      for(int i = 0; i < MAXPROC; i++)
      {
          ProcTable[i].childProcPtr = NULL;
@@ -119,6 +129,16 @@ int start2(char *arg)
     return pid;
 
 } /* start2 */
+
+void nullsys3(sysargs *args)
+{
+  if(DEBUG3 && debugflag3)
+  {
+    console("  - nullsys(): process %d", getpid());
+  }
+  console("    - nullsys(): Invalid syscall %d. Halting...\n", args->number);
+  terminate_real(1);
+}
 
 int  wait_real(int *status)
 {
@@ -187,6 +207,7 @@ int  spawn_real(char *name, int (*func)(char *), char *arg, int stack_size, int 
   ProcTable[slot].pid = pid;
   ProcTable[slot].start_func = func;
   ProcTable[slot].priority = priority;
+  numProcs++;
 
   if(name != NULL)
   {
