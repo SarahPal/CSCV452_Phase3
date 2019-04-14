@@ -172,7 +172,7 @@ void wait(sysargs *args)
     {
         console("    - wait(): wait reached\n");
     }
-    int status = args->arg2;
+    int status = (int)args->arg2;
 
     int pid = wait_real(&status);
 
@@ -346,14 +346,18 @@ void terminate_real(int status)
             i++;
         }
 
-        for(int j = 0; j < process.num_children; i++)
+        for(int j = 0; j < process.num_children; j++)
         {
-            remove_child(getpid(), process.ppid);
+            if(DEBUG3 && debugflag3)
+                console("        - terminate_real(): zapping child %d\n", children[j]);
+            remove_child(children[j], process.ppid);
             zap(children[j]);
+            console("        - terminate_real(): Child %d has been zapped\n", children[j]);
         }
-    }
 
+    }
     remove_child(getpid(), process.ppid);
+    //zap(process.pid);
     clear_proc(getpid()%MAXPROC);
     numProcs--;
     quit(status);
@@ -489,7 +493,7 @@ void sem_v(sysargs *args)
 {
     if(DEBUG3 && debugflag3)
         console("    - sem_v(): entering sem_v function.\n");
-    int semID = args->arg1;
+    int semID = (int)args->arg1;
     int result = sem_v_real(semID);
 
     args->arg4 = (void *) result;
@@ -662,60 +666,69 @@ void add_child(int child_ID, int parent_ID)
     }
     else
     {
-        console("IN THE ELSE \n");
-        proc_ptr child = ProcTable[parent_ID].childProcPtr;
-        while(child->nextSiblingPtr != NULL)
-        {
-            ProcTable[parent_ID].childProcPtr->nextSiblingPtr = &ProcTable[child_ID];
-            child = child->nextSiblingPtr;
-            if(DEBUG3 && debugflag3)
-                console("        - add_child(): child process added successfully2\n");
-        }
+        ProcTable[parent_ID].childProcPtr->nextSiblingPtr = &ProcTable[child_ID];
+
+        if(DEBUG3 && debugflag3)
+            console("        - add_child(): child process added successfully2\n");
     }
 
 } /*add_child */
 
 void remove_child(int child_ID, int parent_ID)
 {
+    console("%d\n", ProcTable[parent_ID].num_children);
     if(DEBUG3 && debugflag3)
     {
         console("    - remove_child(): removing child from process table\n");
     }
 
      parent_ID %= MAXPROC;
-
-     ProcTable[parent_ID].num_children--;
-
+     console("%d, %d\n", parent_ID, child_ID);
      if(ProcTable[parent_ID].childProcPtr->pid == child_ID)
      {
+         console(" I got here5\n");
          if(DEBUG3 && debugflag3)
             console("        - remove_child(): removing child...\n");
          ProcTable[parent_ID].childProcPtr = ProcTable[parent_ID].childProcPtr->nextSiblingPtr;
+         ProcTable[parent_ID].num_children--;
      }
-     else
+     else if(ProcTable[parent_ID].childProcPtr != NULL)
      {
-         if(DEBUG3 && debugflag3)
-            console("        - remove_child(): locating child to remove...\n");
+         console("I got here blah\n");
          proc_ptr child = ProcTable[parent_ID].childProcPtr;
+         if(child->nextSiblingPtr == NULL)
+         {
+             console(" I got here9\n");
+             //ProcTable[parent_ID].childProcPtr = NULL;
+         }
          while(child->nextSiblingPtr != NULL)
          {
              if(DEBUG3 && debugflag3)
-                console("        - remove_child(): inside the while loop...\n");
+                console("        - remove_child(): locating child to remove...\n");
+             console(" I got here\n");
              if(child->nextSiblingPtr->pid == child_ID)
              {
+                 console(" I got here2\n");
                  if(DEBUG3 && debugflag3)
                     console("        - remove_child(): child located. Removing...\n");
 
                  child->nextSiblingPtr = child->nextSiblingPtr->nextSiblingPtr;
              }
-             else
-             {
-                 if(DEBUG3 && debugflag3)
-                    console("        - remove_child(): incrementing...\n");
+             else {
+                 console(" I got here3\n");
                  child = child->nextSiblingPtr;
              }
          }
+         ProcTable[parent_ID].num_children--;
      }
+     else
+     {
+         console("here\n");
+
+     }
+     console(" I got here4\n");
+
+     console("%d\n", ProcTable[parent_ID].num_children);
 } /* remove_child */
 
 int new_getpid(sysargs *args)
